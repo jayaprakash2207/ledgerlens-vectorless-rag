@@ -2,232 +2,214 @@
 
 [![Python](https://img.shields.io/badge/Python-3.x-3776AB?style=for-the-badge&logo=python&logoColor=white)](https://www.python.org/)
 [![Streamlit](https://img.shields.io/badge/Streamlit-App-FF4B4B?style=for-the-badge&logo=streamlit&logoColor=white)](https://streamlit.io/)
-[![Gemini](https://img.shields.io/badge/LLM-Gemini-4285F4?style=for-the-badge&logo=google&logoColor=white)](https://ai.google.dev/)
-[![Repo](https://img.shields.io/badge/GitHub-LedgerLens-181717?style=for-the-badge&logo=github)](https://github.com/jayaprakash2207/ledgerlens)
+[![Gemini](https://img.shields.io/badge/LLM-Gemini_2.5_Flash-4285F4?style=for-the-badge&logo=google&logoColor=white)](https://ai.google.dev/)
+[![License](https://img.shields.io/badge/License-All_Rights_Reserved-red?style=for-the-badge)](LICENSE)
+[![GitHub](https://img.shields.io/badge/GitHub-ledgerlens--vectorless--rag-181717?style=for-the-badge&logo=github)](https://github.com/jayaprakash2207/ledgerlens-vectorless-rag)
 
-An explainable **vectorless RAG** system for SEC filings Q&A and insights.
+> **Ask anything about any document. No embeddings. No vector database. Fully explainable.**
 
-LedgerLens reads SEC-style HTML and PDF reports, extracts structured sections, retrieves relevant chunks with a rule-based pipeline instead of embeddings, and uses Gemini to answer any user question. The result is a simpler, more transparent RAG workflow that is easier to inspect, debug, and demo.
+LedgerLens is a vectorless RAG system that lets you upload any PDF or HTML document and ask it any question. It retrieves relevant context using transparent rule-based scoring — no black-box embedding similarity — and sends that context to Gemini to produce a clear, sourced answer.
 
-## Highlights
+---
 
-- No vector database
-- No embeddings pipeline
-- Explainable rule-based retrieval
-- Financial-report-focused section splitting
-- Gemini-powered Q&A over filings
-- Parquet-backed persistence of documents and chunks
-- Streamlit UI with a built-in vectorless RAG visualization panel
-- Report comparison workflow for detecting changes in risk framing
+## What It Does
+
+- Upload a **PDF or HTML** document
+- Ask **any question** — summaries, facts, figures, comparisons, risks, definitions, anything
+- Get a **Gemini-powered answer** backed by retrieved document chunks
+- See **exactly what was retrieved** and why — no hidden vector magic
+- Optionally get **risk analysis** when your question involves risks or red flags
+- **Compare two documents** to detect what changed between versions
+
+---
 
 ## Why Vectorless RAG?
 
-Many RAG systems hide retrieval logic behind embeddings and similarity search. This project keeps retrieval visible.
+Most RAG systems bury retrieval inside embedding models and cosine similarity. You get an answer but you can't see the path. LedgerLens takes the opposite approach.
+
+| Typical RAG | LedgerLens |
+|---|---|
+| Embedding model required | No embeddings |
+| Vector database required | Plain Parquet files |
+| Retrieval is a black box | Every score is visible |
+| Hard to debug | Full fetch trace in the UI |
+| Complex setup | `pip install -r requirements.txt` |
 
 Instead of storing vectors, LedgerLens stores:
 
-1. cleaned plain text
-2. named report sections
+1. Cleaned plain text
+2. Named document sections
 3. Parquet-backed chunk store
-4. retrieval scores and fetched context sent to Gemini
+4. Retrieval scores you can inspect directly in the UI
 
-That means you can actually see:
-
-- what was parsed
-- how it was grouped
-- what was retrieved
-- why the model got that context
+---
 
 ## How It Works
 
-```text
-Report File
-   ->
-HTML/PDF Parser
-   ->
-Cleaned Plain Text
-   ->
-Section Splitter
-   ->
-Named Section Buckets
-   ->
-Parquet Store (documents + chunks)
-   ->
-Chunk Retriever
-   ->
-Gemini
-   ->
-Answer + Sources (and risk analysis if requested)
+```
+Document (PDF or HTML)
+        ↓
+   Parser cleans text
+        ↓
+ Section Splitter detects named buckets
+ (risk_factors · mda · notes · legal · auditor_notes)
+        ↓
+  Parquet Store saves documents + chunks
+        ↓
+  Chunk Retriever scores chunks
+  (keyword overlap + section priority)
+        ↓
+   Top chunks sent to Gemini
+        ↓
+  Answer + Sources returned to you
 ```
 
-## Screenshots
-
-### App Preview
-
-![LedgerLens app preview](docs/screenshots/app-ui-preview.svg)
-
-### Vectorless RAG Flow
-
-![Vectorless RAG flow](docs/screenshots/vectorless-rag-flow.svg)
-
-## How Retrieval Works
-
-This project does not query a vector database to fetch context.
-
-Instead, it performs vectorless retrieval over chunked report text in Parquet:
-
-1. the parser reads a PDF or HTML filing into plain text
-2. the section splitter groups that text into named buckets like `risk_factors`, `mda`, `notes`, and `legal`
-3. the Parquet store persists the raw text and chunked sections
-4. the chunk retriever tokenizes the user question
-5. it scores chunks using section priority + keyword overlap
-6. it ranks the chunks
-7. it fetches the top-scoring chunks
-8. it sends that fetched context to Gemini for an answer
-
-In short:
-
-`question -> query tokens -> chunk ranking -> top chunk fetch -> Gemini output`
-
-## Worked Example
-
-For a question like:
-
-`How many shares were repurchased?`
-
-the retriever will usually:
-
-1. tokenize the query into words like `how`, `many`, `shares`, `repurchased`
-2. recognize that those terms map strongly to `notes` and `legal` sections
-3. score chunks higher where those terms appear
-4. fetch the top matched chunks
-5. pass those chunks to Gemini
-6. produce an answer with short supporting quotes
-
-## In-App Retrieval Visualization
-
-The Streamlit UI now includes a detailed retrieval walkthrough under:
-
-`How Vectorless RAG Stores This Report`
-
-Inside that panel, the app shows:
-
-- `Retrieval Flow Diagram`
-- `Fetch Trace`
-- `Ranked Section Cards`
-- `Worked Example: How Data Was Found`
-
-That means you can inspect:
-
-- how the query was understood
-- how the matching section was found
-- what text was fetched
-- what context was sent to Gemini
-- how the final structured output was formed
+---
 
 ## Features
 
-### Single Report Analysis
+### Ask Any Question
+Upload a document and type any question. LedgerLens retrieves the most relevant chunks from the document and lets Gemini answer directly from that context.
 
-Upload one filing and get:
+```
+"What were the total revenues last year?"
+"Who are the key executives mentioned?"
+"What legal proceedings are described?"
+"Summarize the main findings of this report."
+"What risks does the company highlight?"
+```
 
-- answer to any question
-- top chunks and source quotes
-- optional risk summary when a risk question is asked
+### Automatic Risk Analysis
+When your question contains risk-related terms, the app automatically runs a deeper risk analysis pass and returns:
 
-### Report Comparison
+- Top risks identified
+- Risk categories breakdown
+- Red flags detected
+- Highlighted risky sentences
+- Confidence score
 
-Upload an older and newer filing to detect:
+### Document Comparison
+Upload two versions of a document (old and new) and detect:
 
-- new risks
-- removed risks
-- tone changes
-- risk intensity changes
-- new red flags
+- New risks that appeared
+- Risks that were removed
+- Tone shifts
+- Risk intensity changes
+- New red flags
 
 ### Vectorless RAG Visualization
+The UI includes a full retrieval walkthrough panel showing:
 
-The UI includes a dedicated panel showing:
+- **Retrieval Flow Diagram** — the 5-step pipeline from query to answer
+- **Fetch Trace** — query tokens, prioritized sections, and scoring breakdown
+- **Ranked Section Cards** — every section scored with progress bars
+- **Worked Example** — step-by-step trace of exactly how your answer was found
+- **Parquet Memory Shape** — the live data structure behind the answer
 
-- parsed text size
-- stored section buckets
-- retrieval scores
-- selected context passed to Gemini
-- in-memory data shape
+### Parquet Data Store
+Every uploaded document is persisted to local Parquet files. The Data Store tab lets you browse stored documents, inspect chunks, and view raw text.
 
-This makes the retrieval path easy to explain in demos, interviews, and project reviews.
+---
 
-## Example Questions
+## Pipeline in Detail
 
-You can ask prompts like:
+### Step 1 — Parse
+The parser reads your PDF or HTML file and extracts clean plain text, stripping markup and formatting noise.
 
-- `How many shares were repurchased?`
-- `What were net sales in 2023?`
-- `Which legal proceedings are described?`
-- `What are the main risks?`
+### Step 2 — Split into Sections
+The section splitter detects named buckets in the text:
+
+| Section | What It Captures |
+|---|---|
+| `risk_factors` | Disclosed risks and uncertainties |
+| `mda` | Management discussion and analysis |
+| `notes` | Financial notes and disclosures |
+| `legal` | Legal proceedings |
+| `auditor_notes` | Auditor commentary |
+
+### Step 3 — Store in Parquet
+Documents and chunks are saved to local Parquet files via PyArrow and Pandas. No database required.
+
+### Step 4 — Retrieve
+The chunk retriever tokenizes your question and scores every chunk using:
+
+- **Section priority score** — sections more likely to contain the answer rank higher
+- **Keyword overlap score** — chunks where more question words appear rank higher
+- **Red-flag bonus** — chunks containing risk signal words get a boost on risk queries
+
+Final score = base score + keyword score + red-flag bonus
+
+### Step 5 — Answer with Gemini
+The top-scoring chunks are sent to Gemini as context. Gemini returns a structured JSON response with an answer and supporting source quotes.
+
+---
 
 ## Project Structure
 
-```text
+```
 .
-|-- analysis/
-|   |-- comparison_engine.py
-|   |-- qa_engine.py
-|   `-- risk_analyzer.py
-|-- data/
-|   |-- apple_2023.html
-|   `-- README.txt
-|-- llm/
-|   |-- gemini_interface.py
-|   `-- ollama_interface.py
-|-- parser/
-|   |-- html_parser.py
-|   `-- pdf_parser.py
-|-- retrieval/
-|   |-- chunk_retriever.py
-|   `-- rule_engine.py
-|-- segmentation/
-|   `-- section_splitter.py
-|-- storage/
-|   `-- parquet_store.py
-|-- tests/
-|   `-- test_section_splitter.py
-|-- ui/
-|   `-- app.py
-|-- main.py
-|-- requirements.txt
-`-- README.md
+├── analysis/
+│   ├── comparison_engine.py   # Compare two document versions
+│   ├── qa_engine.py           # General Q&A over retrieved chunks
+│   └── risk_analyzer.py       # Risk-specific deep analysis
+├── data/
+│   └── apple_2023.html        # Sample SEC filing for testing
+├── llm/
+│   └── gemini_interface.py    # Gemini API client
+├── parser/
+│   ├── html_parser.py         # HTML → plain text
+│   └── pdf_parser.py          # PDF → plain text
+├── retrieval/
+│   ├── chunk_retriever.py     # Parquet chunk scoring and ranking
+│   └── rule_engine.py         # Rule-based section retrieval + explain
+├── segmentation/
+│   └── section_splitter.py    # Named section detection
+├── storage/
+│   └── parquet_store.py       # Parquet persistence layer
+├── tests/
+│   └── test_section_splitter.py
+├── ui/
+│   └── app.py                 # Streamlit app (3 tabs + RAG visualization)
+├── main.py                    # CLI entry point
+└── requirements.txt
 ```
 
-## Architecture Snapshot
+---
 
-| Layer | File(s) | Responsibility |
+## Architecture
+
+| Layer | File(s) | What It Does |
 |---|---|---|
 | Parsing | `parser/html_parser.py`, `parser/pdf_parser.py` | Extract clean text from HTML and PDF |
-| Segmentation | `segmentation/section_splitter.py` | Detect financial-report sections like `risk_factors` and `mda` |
+| Segmentation | `segmentation/section_splitter.py` | Detect and name document sections |
 | Storage | `storage/parquet_store.py` | Persist documents and chunks to Parquet |
-| Retrieval | `retrieval/chunk_retriever.py` | Rank chunks using rule-based keyword and section-priority logic |
-| LLM | `llm/gemini_interface.py` | Send retrieved context to Gemini |
-| Analysis | `analysis/risk_analyzer.py`, `analysis/qa_engine.py` | Produce answers and optional risk analysis |
-| Comparison | `analysis/comparison_engine.py` | Compare old vs new reports |
-| UI | `ui/app.py` | Streamlit interface and vectorless-RAG visualization |
+| Retrieval | `retrieval/chunk_retriever.py`, `retrieval/rule_engine.py` | Score and rank chunks with rule-based logic |
+| LLM | `llm/gemini_interface.py` | Send retrieved context to Gemini and parse response |
+| Analysis | `analysis/qa_engine.py`, `analysis/risk_analyzer.py` | Q&A and optional risk deep-dive |
+| Comparison | `analysis/comparison_engine.py` | Diff two document versions |
+| UI | `ui/app.py` | Streamlit interface with 3 tabs + vectorless RAG panel |
+
+---
 
 ## Tech Stack
 
-- Python
-- Streamlit
-- BeautifulSoup4
-- pdfplumber
-- PyMuPDF
-- Requests
-- Pandas + PyArrow (Parquet)
-- Gemini API
+- **Python 3.x**
+- **Streamlit** — UI with tabs and expanders
+- **Gemini 2.5 Flash** — LLM for answering questions
+- **BeautifulSoup4** — HTML parsing
+- **pdfplumber + PyMuPDF** — PDF parsing
+- **Pandas + PyArrow** — Parquet storage
+- **Requests** — Gemini API calls
+
+---
 
 ## Setup
 
-### 1. Create a virtual environment
+### 1. Clone and create a virtual environment
 
 ```powershell
+git clone https://github.com/jayaprakash2207/ledgerlens-vectorless-rag.git
+cd ledgerlens-vectorless-rag
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
 ```
@@ -236,44 +218,29 @@ python -m venv .venv
 
 ```powershell
 python -m pip install -r requirements.txt
-python -m pip install pytest
 ```
+
+---
 
 ## Gemini API Key
 
-You can provide the Gemini API key in either of these ways:
+You need a free Gemini API key from [Google AI Studio](https://aistudio.google.com/app/apikey).
 
-### Option 1. Enter it in the Streamlit UI
+**Option 1 — Paste it in the app**
 
-The app includes a secure password-style field for the key.
+The Streamlit UI has a secure password field at the top. Paste your key there before running analysis.
 
-### Option 2. Set an environment variable
-
-```powershell
-$env:GEMINI_API_KEY="your_key_here"
-```
-
-## Run the Project
-
-### CLI mode
+**Option 2 — Set an environment variable**
 
 ```powershell
-.\.venv\Scripts\python.exe main.py --model gemini-2.5-flash
+$env:GEMINI_API_KEY = "your_key_here"
 ```
 
-Example:
+---
 
-```powershell
-.\.venv\Scripts\python.exe main.py --file data\apple_2023.html --query "What are the main risks?" --model gemini-2.5-flash
-```
+## Run
 
-Available CLI arguments:
-
-- `--file` path to a PDF or HTML report
-- `--query` analysis question
-- `--model` Gemini model name
-
-### Streamlit app
+### Streamlit app (recommended)
 
 ```powershell
 .\.venv\Scripts\python.exe -m streamlit run ui\app.py
@@ -281,63 +248,65 @@ Available CLI arguments:
 
 Then:
 
-1. paste the Gemini API key
-2. upload a PDF or HTML report
-3. run analysis
-4. open `How Vectorless RAG Stores This Report`
+1. Paste your Gemini API key
+2. Upload a PDF or HTML document
+3. Type any question
+4. Click **Analyze Report**
+5. Open the **How Vectorless RAG Stores This Report** panel to inspect every retrieval step
+
+### CLI mode
+
+```powershell
+.\.venv\Scripts\python.exe main.py --file data\apple_2023.html --query "What are the main risks?" --model gemini-2.5-flash
+```
+
+Available arguments:
+
+| Flag | Default | Description |
+|---|---|---|
+| `--file` | `data/apple_2023.html` | Path to a PDF or HTML document |
+| `--query` | `What are the main risks?` | Your question |
+| `--model` | `gemini-2.5-flash` | Gemini model name |
+
+---
 
 ## Testing
-
-Run the tests with:
 
 ```powershell
 .\.venv\Scripts\python.exe -m pytest -q
 ```
 
-## Sample Data
+---
 
-The repo currently includes:
+## Example Questions You Can Ask
 
-- `data/apple_2023.html`
+```
+What is the total revenue reported?
+Who signed off on the audit?
+What are the main business risks?
+How many employees does the company have?
+What legal cases are currently pending?
+Summarize the management discussion section.
+What changed in risk disclosures between the two reports?
+Are there any red flags in the financial notes?
+```
 
-You can add more sample reports to the `data/` folder for local testing.
+---
 
-## What Makes This Useful
+## Limitations
 
-- Great for explainable RAG demos
-- Useful for SEC filing analysis prototypes
-- Easier to debug than embedding-heavy pipelines
-- Good learning project for document parsing and retrieval
-- Strong base for building deeper financial AI workflows
+- Retrieval is rule-based, not semantic — exact keyword overlap matters
+- Section detection is tuned for structured report-style documents
+- Answer quality depends on the parsed text quality and Gemini response
+- Very short or scanned PDFs may parse poorly
 
-## Current Limitations
+---
 
-- Retrieval is heuristic rather than embedding-based
-- Section detection depends on common SEC-style headings
-- Output quality depends on parsed text quality and Gemini responses
-- Test coverage is still minimal
+## Security
 
-## Roadmap Ideas
+Do not commit API keys to source control. Use environment variables or the in-app key field. If a key has been exposed, rotate it immediately at [Google AI Studio](https://aistudio.google.com/app/apikey).
 
-- richer parser and retriever tests
-- visual retrieval trace exports
-- more filing formats
-- parsed-document caching
-- chart-based retrieval analytics
-- stronger comparison reporting
-
-## Security Note
-
-Do not commit API keys to source control. Use environment variables or the Streamlit key field for local testing. If a key has been exposed publicly, rotate it immediately.
-
-## Repository Status
-
-This repository is actively set up for:
-
-- local development
-- GitHub publishing
-- interactive Streamlit demos
-- explainable vectorless RAG experiments
+---
 
 ## Contributing
 
@@ -345,6 +314,4 @@ See [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## License
 
-This project is distributed under a **permission required / all rights reserved** license.
-
-See [LICENSE](LICENSE). Anyone who wants to use, modify, redistribute, or deploy this project must obtain prior permission from the owner.
+All rights reserved. Anyone who wants to use, modify, redistribute, or deploy this project must obtain prior written permission from the owner. See [LICENSE](LICENSE).
