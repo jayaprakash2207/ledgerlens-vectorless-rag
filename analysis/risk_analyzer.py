@@ -38,7 +38,7 @@ class RiskAnalyzer:
                 print("RiskAnalyzer: used LLM response")
                 return response
             if self.require_llm:
-                raise RuntimeError("Ollama did not return a valid response.")
+                raise RuntimeError("LLM did not return a valid response.")
 
         return self._heuristic_analysis(text)
 

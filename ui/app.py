@@ -5,25 +5,31 @@ import sys
 import tempfile
 from typing import Dict, List, Optional, Tuple
 
+import pandas as pd
 import streamlit as st
+from dotenv import load_dotenv
 
+load_dotenv()
 APP_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 if APP_ROOT not in sys.path:
     sys.path.insert(0, APP_ROOT)
 
 from analysis.comparison_engine import compare_reports
+from analysis.qa_engine import QAEngine
 from analysis.risk_analyzer import RiskAnalyzer
 from llm.gemini_interface import GeminiClient
 from parser.html_parser import SEC10KHtmlParser
 from parser.pdf_parser import PDFParser
+from retrieval.chunk_retriever import ChunkRetriever
 from retrieval.rule_engine import RuleBasedRetriever
 from segmentation.section_splitter import SectionSplitter
+from storage.parquet_store import ParquetStore
 
 
-st.set_page_config(page_title="Axithor Risk AI", layout="wide")
+st.set_page_config(page_title="LedgerLens", layout="wide")
 
-st.title("Axithor Risk AI")
-st.caption("Explainable vectorless RAG for SEC filings, risk discovery, and report comparison.")
+st.title("LedgerLens")
+st.caption("Vectorless filings intelligence for SEC reports, Q&A, and comparisons.")
 
 use_ollama = st.checkbox("Use LLM (Gemini)", value=True, disabled=True)
 model_name = st.text_input("Gemini model", value="gemini-2.5-flash")
@@ -142,11 +148,12 @@ def _render_vectorless_rag_view(
     retrieved: List[object],
     query: str,
     retrieval_explanation: object,
+    top_chunks: List[object],
 ) -> None:
     st.markdown("### Vectorless RAG View")
     st.info(
-        "This project does not store embeddings or vectors. It keeps cleaned text in memory, "
-        "splits it into named sections, then ranks those sections with rules based on your query."
+        "This project does not store embeddings or vectors. It stores cleaned text and chunked sections in "
+        "Parquet, then uses keyword and rule scoring to fetch relevant context for Gemini."
     )
 
     total_chars = len(cleaned_text)
@@ -185,7 +192,7 @@ def _render_vectorless_rag_view(
         )
     with pipe_d:
         st.markdown("**4. Analyze**")
-        st.caption("Concatenated retrieved text goes to Gemini")
+        st.caption("Fetched context goes to Gemini")
         st.code("\n\n".join(item.text[:180] for item in retrieved) or "No retrieved text", language="text")
 
     st.markdown("#### Retrieval Flow Diagram")
@@ -231,8 +238,8 @@ def _render_vectorless_rag_view(
           <div style="text-align:center;font-size:34px;color:#54789c;">→</div>
           <div style="background:#1d4d7a;color:#ffffff;border-radius:16px;padding:16px;min-height:150px;">
             <div style="font-weight:700;font-size:18px;margin-bottom:8px;">5. Gemini</div>
-            <div style="font-size:14px;opacity:0.9;margin-bottom:10px;">Fetched context is analyzed</div>
-            <div style="font-size:15px;line-height:1.5;">Top risks, summary, categories, red flags</div>
+                        <div style="font-size:14px;opacity:0.9;margin-bottom:10px;">Fetched context is analyzed</div>
+                        <div style="font-size:15px;line-height:1.5;">Answer, sources, and any detected risks</div>
           </div>
         </div>
         """,
@@ -348,12 +355,16 @@ def _render_vectorless_rag_view(
         with st.expander(f"Preview: {item['section']}"):
             st.code(item["preview"], language="text")
 
-    st.markdown("#### In-Memory Shape")
+    st.markdown("#### Parquet + Memory Shape")
     st.code(
         json.dumps(
             {
                 "cleaned_text": f"<{len(cleaned_text)} chars>",
                 "sections": {name: f"<{len(text)} chars>" for name, text in sections.items() if text},
+                "top_chunks": [
+                    {"chunk_id": item.chunk_id, "section": item.section, "score": round(item.score, 3)}
+                    for item in top_chunks
+                ],
                 "retrieved_context": [
                     {"section": item.section, "score": round(item.score, 3), "chars": len(item.text)}
                     for item in retrieved
@@ -365,12 +376,12 @@ def _render_vectorless_rag_view(
     )
 
 
-tab_single, tab_compare = st.tabs(["Single Report Analysis", "Compare Reports"])
+tab_single, tab_compare, tab_store = st.tabs(["Single Report Analysis", "Compare Reports", "Data Store"])
 
 with tab_single:
     st.subheader("Single Report Analysis")
     uploaded_file = st.file_uploader("Upload a report (PDF or HTML)", type=["pdf", "html", "htm"], key="single")
-    query = st.text_input("Ask a question about risks", value="What are the main risks?", key="single_query")
+    query = st.text_input("Ask any question", value="What are the main risks?", key="single_query")
     analyze = st.button("Analyze Report", key="analyze")
 
     if analyze:
@@ -378,6 +389,10 @@ with tab_single:
             st.warning("Please upload a report before running analysis.")
         else:
             with st.spinner("Analyzing report..."):
+                if not api_key_value:
+                    st.error("Gemini API key is required for answers. Set GEMINI_API_KEY or paste it above.")
+                    st.stop()
+
                 sections, cleaned_text = _parse_upload(uploaded_file)
                 if sections and cleaned_text:
                     _missing_section_warnings(sections)
@@ -385,32 +400,72 @@ with tab_single:
                     retriever = RuleBasedRetriever()
                     llm_client = GeminiClient(model=model_name, api_key=api_key_value)
                     analyzer = RiskAnalyzer(llm_client=llm_client, require_llm=True)
+                    qa_engine = QAEngine(llm_client=llm_client)
+                    store = ParquetStore()
+                    chunk_retriever = ChunkRetriever()
+
+                    stored = store.save_document(
+                        source_name=uploaded_file.name,
+                        file_type=os.path.splitext(uploaded_file.name)[1].lstrip(".").lower(),
+                        raw_text=cleaned_text,
+                        sections=sections,
+                    )
+                    chunks = store.load_chunks(stored.doc_id)
+                    top_chunks = chunk_retriever.retrieve(query, chunks, top_k=5)
+                    qa_result = qa_engine.answer(query, [item.text for item in top_chunks])
+
+                    is_risk_query = any(term in query.lower() for term in ["risk", "risks", "threat", "uncertainty", "red flag"])
 
                     retrieval_explanation = retriever.explain_retrieval(query, sections)
                     retrieved = retriever.retrieve(query, sections, max_sections=2)
-                    combined_text = "\n\n".join(result.text for result in retrieved)
-                    analysis = analyzer.analyze(combined_text)
+                    analysis = None
+                    if is_risk_query:
+                        combined_text = "\n\n".join(result.text for result in retrieved)
+                        analysis = analyzer.analyze(combined_text)
 
-                    metric_col, score_col = st.columns(2)
+                    metric_col, score_col, doc_col = st.columns(3)
                     with metric_col:
-                        st.metric("Top Risks", len(analysis.top_risks))
+                        st.metric("Stored Chunks", len(chunks))
                     with score_col:
-                        st.metric("Confidence Score", analysis.confidence_score)
+                        st.metric("Confidence Score", analysis.confidence_score if analysis else 0)
+                    with doc_col:
+                        st.metric("Doc ID", stored.doc_id)
 
-                    st.markdown("### Summary")
-                    st.success(analysis.summary)
+                    st.markdown("### Answer")
+                    if qa_result.answer:
+                        st.success(qa_result.answer)
+                    else:
+                        last_error = getattr(llm_client, "last_error", None)
+                        if last_error:
+                            st.warning(f"No answer returned ({last_error}).")
+                        else:
+                            st.warning("No answer returned. Check your Gemini API key and model name.")
+                    if qa_result.sources:
+                        with st.expander("Answer Sources"):
+                            st.write("\n".join(qa_result.sources))
 
-                    st.markdown("### Risk Categories")
-                    st.json(analysis.risk_categories)
+                    with st.expander("Top Chunks Used"):
+                        for item in top_chunks:
+                            st.write(f"{item.chunk_id}  score={round(item.score, 3)}  section={item.section}")
+                            st.code(item.text[:400], language="text")
 
-                    st.markdown("### Red Flags")
-                    st.write(analysis.red_flags or ["None detected"])
+                    if analysis:
+                        st.markdown("### Risk Summary")
+                        st.success(analysis.summary)
 
-                    with st.expander("Top Risks"):
-                        st.write("\n".join(analysis.top_risks) or "None detected")
+                        st.markdown("### Risk Categories")
+                        st.json(analysis.risk_categories)
 
-                    with st.expander("Highlighted Risky Sentences"):
-                        st.write("\n".join(analysis.risky_sentences[:50]) or "None detected")
+                        st.markdown("### Red Flags")
+                        st.write(analysis.red_flags or ["None detected"])
+
+                        with st.expander("Top Risks"):
+                            st.write("\n".join(analysis.top_risks) or "None detected")
+
+                        with st.expander("Highlighted Risky Sentences"):
+                            st.write("\n".join(analysis.risky_sentences[:50]) or "None detected")
+                    else:
+                        st.info("Risk analysis runs only when the question is about risks.")
 
                     with st.expander("How Vectorless RAG Stores This Report", expanded=True):
                         _render_vectorless_rag_view(
@@ -419,16 +474,25 @@ with tab_single:
                             retrieved,
                             query,
                             retrieval_explanation,
+                            top_chunks,
                         )
 
                     output = {
-                        "top_risks": analysis.top_risks,
-                        "risk_categories": analysis.risk_categories,
-                        "red_flags": analysis.red_flags,
-                        "confidence_score": analysis.confidence_score,
-                        "summary": analysis.summary,
-                        "risky_sentences": analysis.risky_sentences,
+                        "doc_id": stored.doc_id,
+                        "answer": qa_result.answer,
+                        "sources": qa_result.sources,
+                        "confidence_score": analysis.confidence_score if analysis else 0,
                     }
+                    if analysis:
+                        output.update(
+                            {
+                                "top_risks": analysis.top_risks,
+                                "risk_categories": analysis.risk_categories,
+                                "red_flags": analysis.red_flags,
+                                "summary": analysis.summary,
+                                "risky_sentences": analysis.risky_sentences,
+                            }
+                        )
                     _json_download_button(output, "Download JSON")
 
 with tab_compare:
@@ -503,6 +567,60 @@ with tab_compare:
                         "summary": result.summary,
                     }
                     _json_download_button(output, "Download Comparison JSON")
+
+with tab_store:
+    st.subheader("Parquet Data Store")
+    store = ParquetStore()
+    if hasattr(store, "list_documents"):
+        documents = store.list_documents()
+    else:
+        documents = []
+        if os.path.exists(store.docs_path):
+            df = pd.read_parquet(store.docs_path)
+            df = df.sort_values(by="created_at", ascending=False)
+            documents = df.to_dict(orient="records")
+
+    if not documents:
+        st.info("No documents stored yet. Upload a report in Single Report Analysis to create Parquet data.")
+    else:
+        doc_options = {
+            f"{doc['source_name']} ({doc['doc_id']})": doc["doc_id"]
+            for doc in documents
+        }
+        selected_label = st.selectbox("Stored documents", list(doc_options.keys()))
+        selected_id = doc_options[selected_label]
+        doc = store.load_document(selected_id)
+
+        if doc:
+            meta_a, meta_b, meta_c = st.columns(3)
+            with meta_a:
+                st.metric("Doc ID", doc.get("doc_id", ""))
+            with meta_b:
+                st.metric("File Type", doc.get("file_type", ""))
+            with meta_c:
+                st.metric("Text Length", doc.get("text_len", 0))
+
+            st.markdown("### Stored Metadata")
+            st.json(
+                {
+                    "source_name": doc.get("source_name"),
+                    "created_at": doc.get("created_at"),
+                    "text_len": doc.get("text_len"),
+                }
+            )
+
+            with st.expander("Raw Text Preview"):
+                st.code(str(doc.get("raw_text", ""))[:2000], language="text")
+
+            chunks = store.load_chunks(selected_id)
+            st.markdown("### Stored Chunks")
+            st.write(f"Total chunks: {len(chunks)}")
+
+            for chunk in chunks[:10]:
+                st.write(f"{chunk['chunk_id']}  section={chunk['section']}  index={chunk['chunk_index']}")
+                st.code(str(chunk.get("text", ""))[:600], language="text")
+        else:
+            st.warning("Selected document could not be loaded.")
 
 if demo_mode:
     st.info("Demo Mode is enabled, but no demo files are bundled yet.")

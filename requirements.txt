@@ -3,3 +3,6 @@ beautifulsoup4
 pdfplumber
 pymupdf
 requests
+pandas
+pyarrow
+python-dotenv

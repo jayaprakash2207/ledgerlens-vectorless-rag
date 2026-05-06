@@ -1,13 +1,13 @@
-# Axithor Risk AI
+# LedgerLens
 
 [![Python](https://img.shields.io/badge/Python-3.x-3776AB?style=for-the-badge&logo=python&logoColor=white)](https://www.python.org/)
 [![Streamlit](https://img.shields.io/badge/Streamlit-App-FF4B4B?style=for-the-badge&logo=streamlit&logoColor=white)](https://streamlit.io/)
 [![Gemini](https://img.shields.io/badge/LLM-Gemini-4285F4?style=for-the-badge&logo=google&logoColor=white)](https://ai.google.dev/)
-[![Repo](https://img.shields.io/badge/GitHub-Axithor_Risk_AI-181717?style=for-the-badge&logo=github)](https://github.com/jayaprakash2207/Axithor-Risk-AI)
+[![Repo](https://img.shields.io/badge/GitHub-LedgerLens-181717?style=for-the-badge&logo=github)](https://github.com/jayaprakash2207/ledgerlens)
 
-An explainable **vectorless RAG** system for financial risk analysis.
+An explainable **vectorless RAG** system for SEC filings Q&A and insights.
 
-Axithor Risk AI reads SEC-style HTML and PDF reports, extracts structured sections, retrieves the most relevant parts with a rule-based pipeline instead of embeddings, and uses Gemini to generate risk-focused insights. The result is a simpler, more transparent RAG workflow that is easier to inspect, debug, and demo.
+LedgerLens reads SEC-style HTML and PDF reports, extracts structured sections, retrieves relevant chunks with a rule-based pipeline instead of embeddings, and uses Gemini to answer any user question. The result is a simpler, more transparent RAG workflow that is easier to inspect, debug, and demo.
 
 ## Highlights
 
@@ -15,7 +15,8 @@ Axithor Risk AI reads SEC-style HTML and PDF reports, extracts structured sectio
 - No embeddings pipeline
 - Explainable rule-based retrieval
 - Financial-report-focused section splitting
-- Gemini-powered structured risk analysis
+- Gemini-powered Q&A over filings
+- Parquet-backed persistence of documents and chunks
 - Streamlit UI with a built-in vectorless RAG visualization panel
 - Report comparison workflow for detecting changes in risk framing
 
@@ -23,12 +24,12 @@ Axithor Risk AI reads SEC-style HTML and PDF reports, extracts structured sectio
 
 Many RAG systems hide retrieval logic behind embeddings and similarity search. This project keeps retrieval visible.
 
-Instead of storing vectors, Axithor Risk AI stores:
+Instead of storing vectors, LedgerLens stores:
 
 1. cleaned plain text
 2. named report sections
-3. section relevance scores
-4. retrieved context sent to Gemini
+3. Parquet-backed chunk store
+4. retrieval scores and fetched context sent to Gemini
 
 That means you can actually see:
 
@@ -50,20 +51,20 @@ Section Splitter
    ->
 Named Section Buckets
    ->
-Rule-Based Retriever
+Parquet Store (documents + chunks)
    ->
-Top Matching Sections
+Chunk Retriever
    ->
 Gemini
    ->
-Risk Analysis Output
+Answer + Sources (and risk analysis if requested)
 ```
 
 ## Screenshots
 
 ### App Preview
 
-![Axithor Risk AI app preview](docs/screenshots/app-ui-preview.svg)
+![LedgerLens app preview](docs/screenshots/app-ui-preview.svg)
 
 ### Vectorless RAG Flow
 
@@ -71,45 +72,37 @@ Risk Analysis Output
 
 ## How Retrieval Works
 
-This project does not query a database to fetch context.
+This project does not query a vector database to fetch context.
 
-Instead, it performs retrieval directly over parsed report text in memory:
+Instead, it performs vectorless retrieval over chunked report text in Parquet:
 
 1. the parser reads a PDF or HTML filing into plain text
 2. the section splitter groups that text into named buckets like `risk_factors`, `mda`, `notes`, and `legal`
-3. the retriever tokenizes the user question
-4. it prioritizes likely sections based on those query terms
-5. it scores every available section with:
-   - a base priority score
-   - a keyword match score
-   - an optional red-flag bonus
-6. it ranks the sections
-7. it fetches the top-scoring sections
-8. it sends that fetched context to Gemini for analysis
+3. the Parquet store persists the raw text and chunked sections
+4. the chunk retriever tokenizes the user question
+5. it scores chunks using section priority + keyword overlap
+6. it ranks the chunks
+7. it fetches the top-scoring chunks
+8. it sends that fetched context to Gemini for an answer
 
 In short:
 
-`question -> query tokens -> section ranking -> top section fetch -> Gemini output`
+`question -> query tokens -> chunk ranking -> top chunk fetch -> Gemini output`
 
 ## Worked Example
 
 For a question like:
 
-`What are the main risks?`
+`How many shares were repurchased?`
 
 the retriever will usually:
 
-1. tokenize the query into words like `what`, `are`, `the`, `main`, `risks`
-2. recognize that `risks` maps strongly to the `risk_factors` and `mda` sections
-3. score those sections higher than unrelated sections like `legal` or `notes`
-4. fetch the top matched sections
-5. pass those sections to Gemini
-6. produce structured output such as:
-   - top risks
-   - risk categories
-   - red flags
-   - confidence score
-   - summary
+1. tokenize the query into words like `how`, `many`, `shares`, `repurchased`
+2. recognize that those terms map strongly to `notes` and `legal` sections
+3. score chunks higher where those terms appear
+4. fetch the top matched chunks
+5. pass those chunks to Gemini
+6. produce an answer with short supporting quotes
 
 ## In-App Retrieval Visualization
 
@@ -138,12 +131,9 @@ That means you can inspect:
 
 Upload one filing and get:
 
-- top risks
-- risk categories
-- red flags
-- confidence score
-- concise summary
-- highlighted risky sentences
+- answer to any question
+- top chunks and source quotes
+- optional risk summary when a risk question is asked
 
 ### Report Comparison
 
@@ -171,10 +161,10 @@ This makes the retrieval path easy to explain in demos, interviews, and project 
 
 You can ask prompts like:
 
+- `How many shares were repurchased?`
+- `What were net sales in 2023?`
+- `Which legal proceedings are described?`
 - `What are the main risks?`
-- `What operational risks stand out?`
-- `Are there any red flags in this filing?`
-- `How has the company's risk profile changed?`
 
 ## Project Structure
 
@@ -182,6 +172,7 @@ You can ask prompts like:
 .
 |-- analysis/
 |   |-- comparison_engine.py
+|   |-- qa_engine.py
 |   `-- risk_analyzer.py
 |-- data/
 |   |-- apple_2023.html
@@ -193,9 +184,12 @@ You can ask prompts like:
 |   |-- html_parser.py
 |   `-- pdf_parser.py
 |-- retrieval/
+|   |-- chunk_retriever.py
 |   `-- rule_engine.py
 |-- segmentation/
 |   `-- section_splitter.py
+|-- storage/
+|   `-- parquet_store.py
 |-- tests/
 |   `-- test_section_splitter.py
 |-- ui/
@@ -211,9 +205,10 @@ You can ask prompts like:
 |---|---|---|
 | Parsing | `parser/html_parser.py`, `parser/pdf_parser.py` | Extract clean text from HTML and PDF |
 | Segmentation | `segmentation/section_splitter.py` | Detect financial-report sections like `risk_factors` and `mda` |
-| Retrieval | `retrieval/rule_engine.py` | Rank sections using rule-based keyword and section-priority logic |
+| Storage | `storage/parquet_store.py` | Persist documents and chunks to Parquet |
+| Retrieval | `retrieval/chunk_retriever.py` | Rank chunks using rule-based keyword and section-priority logic |
 | LLM | `llm/gemini_interface.py` | Send retrieved context to Gemini |
-| Analysis | `analysis/risk_analyzer.py` | Produce risk summaries, categories, and red flags |
+| Analysis | `analysis/risk_analyzer.py`, `analysis/qa_engine.py` | Produce answers and optional risk analysis |
 | Comparison | `analysis/comparison_engine.py` | Compare old vs new reports |
 | UI | `ui/app.py` | Streamlit interface and vectorless-RAG visualization |
 
@@ -225,6 +220,7 @@ You can ask prompts like:
 - pdfplumber
 - PyMuPDF
 - Requests
+- Pandas + PyArrow (Parquet)
 - Gemini API
 
 ## Setup

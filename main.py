@@ -2,12 +2,16 @@ import argparse
 import json
 import os
 
+from analysis.qa_engine import QAEngine
 from analysis.risk_analyzer import RiskAnalyzer
+from dotenv import load_dotenv
 from llm.gemini_interface import GeminiClient
 from parser.html_parser import SEC10KHtmlParser
 from parser.pdf_parser import PDFParser
+from retrieval.chunk_retriever import ChunkRetriever
 from retrieval.rule_engine import RuleBasedRetriever
 from segmentation.section_splitter import SectionSplitter
+from storage.parquet_store import ParquetStore
 
 
 def _load_text(file_path: str) -> str:
@@ -27,9 +31,10 @@ def _load_text(file_path: str) -> str:
 
 def run_pipeline(file_path: str, query: str, use_ollama: bool, model: str) -> None:
     splitter = SectionSplitter()
-    retriever = RuleBasedRetriever()
     llm_client = GeminiClient(model=model)
-    analyzer = RiskAnalyzer(llm_client=llm_client, require_llm=True)
+    qa_engine = QAEngine(llm_client=llm_client)
+    risk_analyzer = RiskAnalyzer(llm_client=llm_client, require_llm=True)
+    store = ParquetStore()
 
     raw_text = _load_text(file_path)
     print(f"Parsed text length: {len(raw_text)}")
@@ -52,27 +57,48 @@ def run_pipeline(file_path: str, query: str, use_ollama: bool, model: str) -> No
     print(json.dumps(sections_preview, indent=2))
     print("=== END SECTION PREVIEW ===")
 
-    retrieved = retriever.retrieve(query, sections, max_sections=2)
-    combined_text = "\n\n".join(result.text for result in retrieved)
-    analysis = analyzer.analyze(combined_text)
+    stored = store.save_document(
+        source_name=os.path.basename(file_path),
+        file_type=os.path.splitext(file_path)[1].lstrip(".").lower(),
+        raw_text=raw_text,
+        sections=sections,
+    )
+    chunks = store.load_chunks(stored.doc_id)
+    chunk_retriever = ChunkRetriever()
+    top_chunks = chunk_retriever.retrieve(query, chunks, top_k=5)
+    qa_result = qa_engine.answer(query, [item.text for item in top_chunks])
 
-    print("=== RISK ANALYSIS ===")
-    print("Top risks:", analysis.top_risks)
-    print("Summary:", analysis.summary)
+    print("=== GENERAL ANSWER ===")
+    print("Answer:", qa_result.answer)
+    print("Sources:", qa_result.sources)
 
     output = {
+        "doc_id": stored.doc_id,
         "sections": sections,
-        "top_risks": analysis.top_risks,
-        "risk_categories": analysis.risk_categories,
-        "red_flags": analysis.red_flags,
-        "confidence_score": analysis.confidence_score,
-        "summary": analysis.summary,
-        "risky_sentences": analysis.risky_sentences,
+        "answer": qa_result.answer,
+        "sources": qa_result.sources,
     }
+
+    if "risk" in query.lower():
+        retriever = RuleBasedRetriever()
+        retrieved = retriever.retrieve(query, sections, max_sections=2)
+        combined_text = "\n\n".join(result.text for result in retrieved)
+        analysis = risk_analyzer.analyze(combined_text)
+        output.update(
+            {
+                "top_risks": analysis.top_risks,
+                "risk_categories": analysis.risk_categories,
+                "red_flags": analysis.red_flags,
+                "confidence_score": analysis.confidence_score,
+                "summary": analysis.summary,
+                "risky_sentences": analysis.risky_sentences,
+            }
+        )
     print(json.dumps(output, indent=2))
 
 
 def main() -> None:
+    load_dotenv()
     parser = argparse.ArgumentParser(description="Financial Risk Intelligence Assistant")
     parser.add_argument(
         "--file",

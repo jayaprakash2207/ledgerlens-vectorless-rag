@@ -14,9 +14,11 @@ class GeminiClient:
         self.model = model
         self.base_url = base_url.rstrip("/")
         self.api_key = (api_key or os.getenv("GEMINI_API_KEY", "")).strip()
+        self.last_error: Optional[str] = None
 
     def generate(self, prompt: str, temperature: float = 0.2) -> Optional[str]:
         if not self.api_key:
+            self.last_error = "GEMINI_API_KEY not set"
             print("GeminiClient: GEMINI_API_KEY not set")
             return None
 
@@ -31,8 +33,14 @@ class GeminiClient:
             response = requests.post(url, json=payload, params=params, timeout=120)
             response.raise_for_status()
             data = response.json()
-            return self._extract_text(data)
+            text = self._extract_text(data)
+            if not text:
+                self.last_error = "Empty response from Gemini"
+                return None
+            self.last_error = None
+            return text
         except Exception as exc:
+            self.last_error = str(exc)
             print(f"GeminiClient: request failed ({exc})")
             return None
 
